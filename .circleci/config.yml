@@ -1,0 +1,78 @@
+version: 2.1
+
+# Orbs for aws-cli and aws-s3
+orbs:
+  aws-cli: circleci/aws-cli@4.0
+  aws-s3: circleci/aws-s3@4.0.0
+
+# Defining jobs
+jobs:
+  build:
+    docker:
+      - image: cimg/node:22.4.1
+    parameters:
+      for:
+        type: string
+    steps:
+      - checkout
+      - restore_cache:
+          name: Restore Yarn Package Cache
+          keys:
+            - yarn-packages-{{ checksum "yarn.lock" }}
+      - run:
+          name: Install Dependencies
+          command: yarn install --immutable
+      - save_cache:
+          name: Save Yarn Package Cache
+          key: yarn-packages-{{ checksum "yarn.lock" }}
+          paths:
+            - .yarn/cache
+            - .yarn/unplugged
+      - run:
+          name: Build the Application
+          command: yarn build --mode << parameters.for >>
+      - persist_to_workspace:
+          root: .
+          paths:
+            - dist
+
+  deploy:
+    docker:
+      - image: cimg/aws:2024.03
+    parameters:
+      to:
+        type: string
+    steps:
+      - attach_workspace:
+          at: build-result
+      - run:
+          name: Deploy to S3
+          command: aws s3 sync build-result/dist s3://<< parameters.to >>
+
+# Defining workflows
+workflows:
+  build-deploy-production:
+    jobs:
+      - build:
+          for: "production"
+      - deploy:
+          to: $AWS_PRODUCTION_BUCKET_ID
+          requires:
+            - build
+          filters:
+            branches:
+              only:
+                - main
+
+  build-deploy-staging:
+    jobs:
+      - build:
+          for: "staging"
+      - deploy:
+          to: $AWS_STAGING_BUCKET_ID
+          requires:
+            - build
+          filters:
+            branches:
+              only:
+                - main
